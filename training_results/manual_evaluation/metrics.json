@@ -1,0 +1,23 @@
+{
+  "metrics": {
+    "train": {
+      "accuracy": 0.6666666666666666,
+      "precision_weighted": 0.5,
+      "recall_weighted": 0.6666666666666666,
+      "f1_weighted": 0.5555555555555556
+    },
+    "validation": {
+      "accuracy": 0.6666666666666666,
+      "precision_weighted": 0.5,
+      "recall_weighted": 0.6666666666666666,
+      "f1_weighted": 0.5555555555555556
+    },
+    "test": {
+      "accuracy": 0.6666666666666666,
+      "precision_weighted": 0.5,
+      "recall_weighted": 0.6666666666666666,
+      "f1_weighted": 0.5555555555555556
+    }
+  },
+  "history": {}
+}

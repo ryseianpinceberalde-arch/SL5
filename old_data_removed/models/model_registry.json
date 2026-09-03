@@ -1,0 +1,47 @@
+{
+  "models": {
+    "model_v001": {
+      "created": "2026-08-31T08:04:57+00:00",
+      "model_path": "C:\\Users\\Ryse\\Downloads\\SL5\\models\\model_v001.keras",
+      "actions_path": "C:\\Users\\Ryse\\Downloads\\SL5\\models\\model_v001_actions.json",
+      "results_dir": "C:\\Users\\Ryse\\Downloads\\SL5\\models\\model_v001",
+      "classes": 3,
+      "actions": [
+        "hello",
+        "iloveyou",
+        "thanks"
+      ],
+      "model_type": "lstm",
+      "sequence_length": 30,
+      "feature_length": 1662,
+      "feature_mode": "landmark_only",
+      "training_samples": 31,
+      "validation_samples": 7,
+      "test_samples": 7,
+      "validation_accuracy": 1.0,
+      "test_accuracy": 1.0
+    },
+    "model_v002": {
+      "created": "2026-09-01T13:52:36+00:00",
+      "model_path": "C:\\Users\\Ryse\\Downloads\\SL5\\models\\model_v002.keras",
+      "actions_path": "C:\\Users\\Ryse\\Downloads\\SL5\\models\\model_v002_actions.json",
+      "results_dir": "C:\\Users\\Ryse\\Downloads\\SL5\\models\\model_v002",
+      "classes": 2,
+      "actions": [
+        "hello",
+        "thanks"
+      ],
+      "model_type": "lstm",
+      "sequence_length": 30,
+      "feature_length": 1662,
+      "feature_mode": "landmark_only",
+      "training_samples": 42,
+      "validation_samples": 9,
+      "test_samples": 9,
+      "validation_accuracy": 1.0,
+      "test_accuracy": 1.0
+    }
+  },
+  "best_model": "model_v002",
+  "active_model": "model_v002"
+}

@@ -1,0 +1,12 @@
+opencv-python==4.11.0.86
+mediapipe==0.10.21
+tensorflow==2.19.1
+numpy>=1.26,<2
+protobuf>=4.25.3,<5
+scikit-learn
+matplotlib
+scipy
+jax==0.4.34
+jaxlib==0.4.34
+sentencepiece
+sounddevice
