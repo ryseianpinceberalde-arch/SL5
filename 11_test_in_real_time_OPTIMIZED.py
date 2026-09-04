@@ -22,6 +22,8 @@ import numpy as np
 from sign_ai.config import (
     CAMERA_FPS,
     CAMERA_INDEX,
+    CAMERA_HEIGHT,
+    CAMERA_WIDTH,
     CONFIDENCE_THRESHOLD,
     KEYPOINT_LENGTH,
     LANDMARK_ONLY,
@@ -59,7 +61,8 @@ from sign_language_common import (
 WINDOW_NAME = "Real Time Sign Recognition - Optimized"
 PREDICTION_INTERVAL_SECONDS = float(os.getenv("SL_PREDICTION_INTERVAL_SECONDS", "0.15"))
 NO_HAND_RESET_SECONDS = float(os.getenv("SL_NO_HAND_RESET_SECONDS", "0.75"))
-PROCESS_WIDTH = int(os.getenv("SL_PROCESS_WIDTH", "0"))
+PROCESS_WIDTH = int(os.getenv("SL_PROCESS_WIDTH", "640"))
+FPS_SMOOTHING = float(os.getenv("SL_FPS_SMOOTHING", "0.25"))
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,54 @@ class PredictionResult:
     used_memory: bool
     requested_at: float
     completed_at: float
+
+
+class LatestFrameCapture:
+    """Continuously drain the webcam and expose only its newest frame."""
+
+    def __init__(self, capture):
+        self.capture = capture
+        self._condition = threading.Condition()
+        self._frame: np.ndarray | None = None
+        self._frame_id = 0
+        self._last_delivered_id = 0
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="sign-ai-camera-reader", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set() and self.capture.isOpened():
+            received, frame = self.capture.read()
+            if not received:
+                time.sleep(0.01)
+                continue
+            with self._condition:
+                self._frame = frame
+                self._frame_id += 1
+                self._condition.notify_all()
+
+    def read(self, timeout: float = 1.0) -> tuple[bool, np.ndarray | None]:
+        with self._condition:
+            has_new_frame = self._condition.wait_for(
+                lambda: self._frame_id != self._last_delivered_id or self._stop_event.is_set(),
+                timeout=timeout,
+            )
+            if not has_new_frame or self._frame is None:
+                return False, None
+            self._last_delivered_id = self._frame_id
+            return True, self._frame.copy()
+
+    def isOpened(self) -> bool:
+        return not self._stop_event.is_set() and self.capture.isOpened()
+
+    def release(self) -> None:
+        self._stop_event.set()
+        with self._condition:
+            self._condition.notify_all()
+        self._thread.join(timeout=1.0)
+        self.capture.release()
+        if self._thread.is_alive():
+            self._thread.join(timeout=1.0)
 
 
 class LatestPredictionWorker:
@@ -226,6 +277,15 @@ def suppress_library_stderr():
 def parse_args():
     parser = argparse.ArgumentParser(description="Run optimized real-time sign recognition.")
     parser.add_argument("--camera", type=int, default=CAMERA_INDEX)
+    parser.add_argument("--camera-fps", type=int, default=CAMERA_FPS)
+    parser.add_argument("--camera-width", type=int, default=CAMERA_WIDTH)
+    parser.add_argument("--camera-height", type=int, default=CAMERA_HEIGHT)
+    parser.add_argument(
+        "--process-width",
+        type=int,
+        default=PROCESS_WIDTH,
+        help="MediaPipe processing width; use 0 for full camera resolution.",
+    )
     parser.add_argument(
         "--fixed-sequence",
         action="store_true",
@@ -319,6 +379,43 @@ def current_model_path() -> str:
     if LEGACY_MODEL_PATH.exists():
         return str(LEGACY_MODEL_PATH)
     return "not found"
+
+
+def configure_camera_capture(
+    cap,
+    requested_fps: int,
+    requested_width: int,
+    requested_height: int,
+) -> tuple[float, float, float, float]:
+    """Request low-latency capture settings and return actual FPS/format values."""
+    try:
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:
+        pass
+    if requested_fps >= 100:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FPS, requested_fps)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, requested_width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, requested_height)
+    actual_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    actual_fourcc = float(cap.get(cv2.CAP_PROP_FOURCC) or 0.0)
+    actual_width = float(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0.0)
+    actual_height = float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0.0)
+    return actual_fps, actual_fourcc, actual_width, actual_height
+
+
+def fourcc_to_text(value: float) -> str:
+    code = int(value)
+    chars = [chr((code >> 8 * index) & 0xFF) for index in range(4)]
+    text = "".join(char for char in chars if char.isprintable()).strip()
+    return text or "unknown"
+
+
+def smooth_fps(previous: float, current: float) -> float:
+    if previous <= 0.0:
+        return current
+    alpha = max(0.0, min(1.0, FPS_SMOOTHING))
+    return previous * (1.0 - alpha) + current * alpha
 
 
 def load_model_if_compatible():
@@ -456,17 +553,18 @@ def correct_prediction(decision: Decision, sequence: np.ndarray | None) -> bool:
     return True
 
 
-def maybe_resize_for_processing(frame: np.ndarray) -> np.ndarray:
-    if PROCESS_WIDTH <= 0 or frame.shape[1] <= PROCESS_WIDTH:
+def maybe_resize_for_processing(frame: np.ndarray, process_width: int = PROCESS_WIDTH) -> np.ndarray:
+    if process_width <= 0 or frame.shape[1] <= process_width:
         return frame
-    scale = PROCESS_WIDTH / float(frame.shape[1])
+    scale = process_width / float(frame.shape[1])
     height = max(1, int(frame.shape[0] * scale))
-    return cv2.resize(frame, (PROCESS_WIDTH, height), interpolation=cv2.INTER_AREA)
+    return cv2.resize(frame, (process_width, height), interpolation=cv2.INTER_AREA)
 
 
 def draw_performance_panel(
     image: np.ndarray,
     camera_fps: float,
+    target_camera_fps: int,
     ai_fps: float,
     prediction_time_ms: float,
     mode: str,
@@ -475,7 +573,7 @@ def draw_performance_panel(
     put_panel_text(
         image,
         [
-            f"Camera FPS: {camera_fps:.1f}",
+            f"Camera FPS: {camera_fps:.1f} / {target_camera_fps}",
             f"AI Prediction FPS: {ai_fps:.1f}",
             f"Prediction Time: {prediction_time_ms:.0f} ms",
             f"Mode: {mode}",
@@ -490,6 +588,10 @@ def draw_performance_panel(
 def main(camera_index: int = CAMERA_INDEX) -> None:
     args = parse_args()
     camera_index = args.camera if camera_index == CAMERA_INDEX else camera_index
+    requested_camera_fps = max(1, int(args.camera_fps))
+    requested_camera_width = max(1, int(args.camera_width))
+    requested_camera_height = max(1, int(args.camera_height))
+    process_width = max(0, int(args.process_width))
     model, model_actions = load_model_if_compatible()
     model_sequence_length = model_sequence_length_for(model)
     try:
@@ -499,8 +601,14 @@ def main(camera_index: int = CAMERA_INDEX) -> None:
         matcher = DTWMemoryMatcher([])
 
     actions = load_actions(require_existing=False)
-    cap = open_camera(camera_index)
-    cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
+    raw_cap = open_camera(camera_index)
+    actual_camera_fps, actual_fourcc, actual_width, actual_height = configure_camera_capture(
+        raw_cap,
+        requested_camera_fps,
+        requested_camera_width,
+        requested_camera_height,
+    )
+    cap = LatestFrameCapture(raw_cap)
 
     worker = LatestPredictionWorker(model, model_actions, matcher, model_sequence_length)
     motion_detector = MotionDetector()
@@ -537,6 +645,12 @@ def main(camera_index: int = CAMERA_INDEX) -> None:
     print("Collected actions:", actions)
     print("Memory examples loaded:", len(matcher.examples))
     print("Model sequence length:", model_sequence_length)
+    print(f"Camera FPS requested: {requested_camera_fps}")
+    print(f"Camera FPS reported: {actual_camera_fps:.1f}")
+    print(f"Camera size requested: {requested_camera_width}x{requested_camera_height}")
+    print(f"Camera size reported: {actual_width:.0f}x{actual_height:.0f}")
+    print(f"Camera format reported: {fourcc_to_text(actual_fourcc)}")
+    print(f"MediaPipe processing width: {process_width or 'full resolution'}")
     print(f"Prediction interval: {PREDICTION_INTERVAL_SECONDS:.2f}s (~{1.0 / PREDICTION_INTERVAL_SECONDS:.1f} predictions/sec max)")
     print("Recognition mode:", "fixed rolling throttled windows" if fixed_sequence_mode else "motion-triggered signs")
     print("Controls: T teach | C correct/clear | R reset sentence | F fixed/motion mode | Q/ESC quit")
@@ -550,8 +664,9 @@ def main(camera_index: int = CAMERA_INDEX) -> None:
                     print("Camera frame not received.")
                     continue
 
-                process_frame = maybe_resize_for_processing(frame)
-                image, results = mediapipe_detection(process_frame, holistic)
+                process_frame = maybe_resize_for_processing(frame, process_width)
+                _, results = mediapipe_detection(process_frame, holistic)
+                image = frame.copy()
                 draw_styled_landmarks(image, results)
 
                 raw_keypoints = extract_keypoints(results)
@@ -641,13 +756,13 @@ def main(camera_index: int = CAMERA_INDEX) -> None:
                     latest_decision = Decision("TRANSITION", 1.0, "motion", "movement_not_complete")
 
                 camera_frame_count += 1
-                elapsed = frame_started - fps_window_started
+                elapsed = time.perf_counter() - fps_window_started
                 if elapsed >= 1.0:
-                    camera_fps = camera_frame_count / elapsed
-                    ai_fps = ai_result_count / elapsed
+                    camera_fps = smooth_fps(camera_fps, camera_frame_count / elapsed)
+                    ai_fps = smooth_fps(ai_fps, ai_result_count / elapsed)
                     camera_frame_count = 0
                     ai_result_count = 0
-                    fps_window_started = frame_started
+                    fps_window_started = time.perf_counter()
 
                 cv2.rectangle(image, (0, 0), (image.shape[1], 52), (40, 40, 40), -1)
                 cv2.putText(
@@ -685,7 +800,15 @@ def main(camera_index: int = CAMERA_INDEX) -> None:
                     start_y=285,
                 )
                 put_panel_text(image, memory_lines, start_y=485)
-                draw_performance_panel(image, camera_fps, ai_fps, latest_prediction_time_ms, mode_label, latest_used_memory)
+                draw_performance_panel(
+                    image,
+                    camera_fps,
+                    requested_camera_fps,
+                    ai_fps,
+                    latest_prediction_time_ms,
+                    mode_label,
+                    latest_used_memory,
+                )
                 cv2.imshow(WINDOW_NAME, image)
 
                 key = cv2.waitKey(1) & 0xFF

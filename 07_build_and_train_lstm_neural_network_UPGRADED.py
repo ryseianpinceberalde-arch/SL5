@@ -1,4 +1,4 @@
-"""Train a versioned LSTM/GRU model from the current MP_Data samples."""
+"""Train a versioned sequence model from the current MP_Data samples."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
-from tensorflow.keras.layers import BatchNormalization, Bidirectional, Dense, Dropout, GRU, Input, LSTM
+from tensorflow.keras.layers import BatchNormalization, Bidirectional, Dense, Dropout, Flatten, GRU, Input, LSTM
 from tensorflow.keras.models import Sequential, load_model
 
 from sign_ai.config import (
@@ -53,7 +53,17 @@ def build_model(
     model = Sequential()
     model.add(Input(shape=(sequence_length, feature_length)))
 
-    if model_type == "gru":
+    if model_type == "mlp":
+        # Compress each frame before flattening so the MLP stays small enough
+        # for the available dataset while retaining frame order.
+        model.add(Dense(64, activation="relu"))
+        model.add(Flatten())
+        model.add(Dense(128, activation="relu"))
+        if use_batch_norm:
+            model.add(BatchNormalization())
+        if dropout:
+            model.add(Dropout(dropout))
+    elif model_type == "gru":
         model.add(GRU(64, return_sequences=True, activation="relu"))
         if dropout:
             model.add(Dropout(dropout))
@@ -69,7 +79,7 @@ def build_model(
         if dropout:
             model.add(Dropout(dropout))
         model.add(Bidirectional(LSTM(32, return_sequences=False, activation="relu")))
-    else:
+    elif model_type == "lstm":
         model.add(LSTM(64, return_sequences=True, activation="relu"))
         if dropout:
             model.add(Dropout(dropout))
@@ -77,6 +87,8 @@ def build_model(
         if dropout:
             model.add(Dropout(dropout))
         model.add(LSTM(64, return_sequences=False, activation="relu"))
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
     model.add(Dense(64, activation="relu"))
     if use_batch_norm:
@@ -95,7 +107,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--sequence-length", type=int, default=SEQUENCE_LENGTH)
     parser.add_argument("--feature-mode", choices=[LANDMARK_ONLY, LANDMARK_PLUS_VELOCITY], default=FEATURE_MODE)
-    parser.add_argument("--model-type", choices=["lstm", "gru", "bilstm"], default="lstm")
+    parser.add_argument("--model-type", choices=["lstm", "gru", "bilstm", "mlp"], default="lstm")
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--batch-normalization", action="store_true")
     parser.add_argument("--use-cache", action="store_true", help="Use existing processed_data.npz.")

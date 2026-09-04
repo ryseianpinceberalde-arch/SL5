@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -233,25 +234,61 @@ def teach_sequence(
 def load_memory_examples(max_per_label: int | None = None) -> list[MemoryExample]:
     memory = load_memory()
     examples: list[MemoryExample] = []
-    per_label: dict[str, int] = {}
-    for item in reversed(memory.get("examples", [])):
+    grouped_items: dict[str, list[dict]] = defaultdict(list)
+    for item in memory.get("examples", []):
         if not isinstance(item, dict):
             continue
         label = str(item.get("label", ""))
         rel_path = str(item.get("path", ""))
         if not label or not rel_path:
             continue
-        if max_per_label is not None and per_label.get(label, 0) >= max_per_label:
-            continue
-        path = (MEMORY_FILE.parent / rel_path).resolve()
-        if not path.exists():
-            continue
-        sequence = np.load(path).astype(np.float32)
-        if sequence.ndim != 2 or sequence.shape[1] != KEYPOINT_LENGTH:
-            continue
-        examples.append(MemoryExample(label=label, path=path, sequence=sequence, source=str(item.get("source", "")), metadata=item))
-        per_label[label] = per_label.get(label, 0) + 1
+        grouped_items[label].append(item)
+
+    for label in sorted(grouped_items):
+        items = _representative_memory_items(grouped_items[label], max_per_label)
+        for item in items:
+            rel_path = str(item.get("path", ""))
+            path = (MEMORY_FILE.parent / rel_path).resolve()
+            if not path.exists():
+                continue
+            sequence = np.load(path).astype(np.float32)
+            if sequence.ndim != 2 or sequence.shape[1] != KEYPOINT_LENGTH:
+                continue
+            examples.append(
+                MemoryExample(
+                    label=label,
+                    path=path,
+                    sequence=sequence,
+                    source=str(item.get("source", "")),
+                    metadata=item,
+                )
+            )
     return examples
+
+
+def _representative_memory_items(items: list[dict], max_per_label: int | None) -> list[dict]:
+    """Pick examples across the whole label history instead of only newest items."""
+    if max_per_label is None or max_per_label <= 0 or len(items) <= max_per_label:
+        return items
+
+    indices = np.linspace(0, len(items) - 1, max_per_label).round().astype(int)
+    selected: list[dict] = []
+    seen: set[int] = set()
+    for index in indices:
+        index = int(index)
+        if index in seen:
+            continue
+        selected.append(items[index])
+        seen.add(index)
+
+    # Rounding can collide for small caps; fill from newest remaining examples.
+    for index in range(len(items) - 1, -1, -1):
+        if len(selected) >= max_per_label:
+            break
+        if index not in seen:
+            selected.append(items[index])
+            seen.add(index)
+    return selected
 
 
 def save_correction(

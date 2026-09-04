@@ -56,6 +56,9 @@ Notes:
 - Default model input remains landmark-only 1662 features. Optional velocity
   features are available with:
   python 07_build_and_train_lstm_neural_network_UPGRADED.py --feature-mode landmark_plus_velocity
+- Available training architectures are LSTM (default), GRU, bidirectional
+  LSTM, and MLP. To train and activate an MLP model, run:
+  python 07_build_and_train_lstm_neural_network_UPGRADED.py --model-type mlp
 - Dataset checking is non-destructive and only reports issues.
 - Training backs up an existing processed_data.npz before writing a new one.
 - Training saves versioned models in models/ and also updates action.keras for
