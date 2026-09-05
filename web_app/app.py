@@ -254,13 +254,14 @@ def main() -> None:
                 time.sleep(0.05)
 
         print_startup_status(bridge.snapshot())
-        socketio.run(
-            app,
-            host="127.0.0.1",
-            port=5000,
-            debug=False,
-            use_reloader=False,
-            allow_unsafe_werkzeug=True,
+      socketio.run(
+    app,
+    host="0.0.0.0",
+    port=int(os.getenv("PORT", "10000")),
+    debug=False,
+    use_reloader=False,
+    allow_unsafe_werkzeug=True,
+)
         )
     finally:
         app.extensions["publisher_stop"].set()
