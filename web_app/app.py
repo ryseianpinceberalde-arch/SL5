@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 import sys
@@ -22,9 +23,11 @@ except ImportError as exc:
     ) from exc
 
 from web_app.recognition_bridge import RecognitionBridge, UnsupportedModeError
+from web_app.mqtt_publisher import MqttPublisher
 
 
 socketio = SocketIO(async_mode="threading")
+LOGGER = logging.getLogger(__name__)
 
 
 def _prediction_payload(state: dict) -> dict:
@@ -67,6 +70,7 @@ def _mode_payload(state: dict) -> dict:
 def create_app(
     bridge: RecognitionBridge | None = None,
     test_config: dict | None = None,
+    mqtt_publisher: MqttPublisher | None = None,
 ) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_mapping(SECRET_KEY=os.getenv("SIGN_AI_WEB_SECRET", "sign-ai-local-dashboard"))
@@ -75,6 +79,9 @@ def create_app(
 
     active_bridge = bridge or RecognitionBridge(load_models=True)
     app.extensions["recognition_bridge"] = active_bridge
+    app.extensions["mqtt_publisher"] = (
+        mqtt_publisher if mqtt_publisher is not None else MqttPublisher.from_env()
+    )
     app.extensions["publisher_stop"] = threading.Event()
     socketio.init_app(app)
 
@@ -93,6 +100,10 @@ def create_app(
     @app.get("/api/status")
     def api_status():
         return jsonify(active_bridge.snapshot())
+
+    @app.get("/api/mqtt")
+    def api_mqtt():
+        return jsonify(app.extensions["mqtt_publisher"].snapshot())
 
     @app.post("/api/start")
     def api_start():
@@ -145,6 +156,7 @@ def create_app(
 def start_status_publisher(app: Flask):
     """Broadcast changed recognition state without sending camera frame bytes."""
     bridge: RecognitionBridge = app.extensions["recognition_bridge"]
+    mqtt_publisher: MqttPublisher = app.extensions["mqtt_publisher"]
     stop_event: threading.Event = app.extensions["publisher_stop"]
 
     def publish_loop():
@@ -154,9 +166,17 @@ def start_status_publisher(app: Flask):
         previous_mode = None
         previous_status = None
         last_full_status = 0.0
+        mqtt_error_logged = False
 
         while not stop_event.is_set():
             state = bridge.snapshot()
+            try:
+                mqtt_publisher.publish_state(state)
+                mqtt_error_logged = False
+            except Exception as exc:  # A third-party MQTT error must not stop Socket.IO.
+                if not mqtt_error_logged:
+                    LOGGER.warning("MQTT state publishing failed: %s", exc)
+                    mqtt_error_logged = True
             prediction = _prediction_payload(state)
             sentence = _sentence_payload(state)
             fps = _fps_payload(state)
@@ -216,21 +236,24 @@ def print_startup_status(state: dict) -> None:
 
 def main() -> None:
     bridge = RecognitionBridge(load_models=True)
-    app = create_app(bridge=bridge)
-    start_status_publisher(app)
-
-    auto_start = os.getenv("SIGN_AI_WEB_AUTOSTART", "1").strip().lower() not in {"0", "false", "no"}
-    if auto_start:
-        bridge.start()
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            state = bridge.snapshot()
-            if state["camera_connected"] or state["error"]:
-                break
-            time.sleep(0.05)
-
-    print_startup_status(bridge.snapshot())
+    mqtt_publisher = MqttPublisher.from_env()
+    app = create_app(bridge=bridge, mqtt_publisher=mqtt_publisher)
+    publisher_task = None
     try:
+        mqtt_publisher.start()
+        publisher_task = start_status_publisher(app)
+
+        auto_start = os.getenv("SIGN_AI_WEB_AUTOSTART", "1").strip().lower() not in {"0", "false", "no"}
+        if auto_start:
+            bridge.start()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                state = bridge.snapshot()
+                if state["camera_connected"] or state["error"]:
+                    break
+                time.sleep(0.05)
+
+        print_startup_status(bridge.snapshot())
         socketio.run(
             app,
             host="127.0.0.1",
@@ -241,7 +264,16 @@ def main() -> None:
         )
     finally:
         app.extensions["publisher_stop"].set()
-        bridge.stop()
+        join = getattr(publisher_task, "join", None)
+        if callable(join):
+            try:
+                join(timeout=1.0)
+            except Exception as exc:
+                LOGGER.warning("Could not join status publisher during shutdown: %s", exc)
+        try:
+            bridge.stop()
+        finally:
+            mqtt_publisher.stop()
 
 
 if __name__ == "__main__":

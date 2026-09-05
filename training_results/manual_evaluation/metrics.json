@@ -1,22 +1,22 @@
 {
   "metrics": {
     "train": {
-      "accuracy": 0.6666666666666666,
-      "precision_weighted": 0.5,
-      "recall_weighted": 0.6666666666666666,
-      "f1_weighted": 0.5555555555555556
+      "accuracy": 0.8095238095238095,
+      "precision_weighted": 0.8070346320346321,
+      "recall_weighted": 0.8095238095238095,
+      "f1_weighted": 0.8078231292517007
     },
     "validation": {
-      "accuracy": 0.6666666666666666,
-      "precision_weighted": 0.5,
-      "recall_weighted": 0.6666666666666666,
-      "f1_weighted": 0.5555555555555556
+      "accuracy": 0.8095238095238095,
+      "precision_weighted": 0.8070346320346321,
+      "recall_weighted": 0.8095238095238095,
+      "f1_weighted": 0.8078231292517007
     },
     "test": {
-      "accuracy": 0.6666666666666666,
-      "precision_weighted": 0.5,
-      "recall_weighted": 0.6666666666666666,
-      "f1_weighted": 0.5555555555555556
+      "accuracy": 0.8095238095238095,
+      "precision_weighted": 0.8070346320346321,
+      "recall_weighted": 0.8095238095238095,
+      "f1_weighted": 0.8078231292517007
     }
   },
   "history": {}

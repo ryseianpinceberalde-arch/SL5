@@ -1,0 +1,14 @@
+              precision    recall  f1-score   support
+
+good_morning       0.19      1.00      0.32         4
+       hello       1.00      1.00      1.00         4
+         how       0.83      1.00      0.91         5
+    iloveyou       0.00      0.00      0.00         5
+          no       0.00      0.00      0.00         5
+       sorry       0.00      0.00      0.00         4
+    thankyou       1.00      1.00      1.00         5
+         yes       0.00      0.00      0.00         4
+
+    accuracy                           0.50        36
+   macro avg       0.38      0.50      0.40        36
+weighted avg       0.39      0.50      0.41        36

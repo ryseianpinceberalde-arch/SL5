@@ -1,0 +1,9 @@
+actual/predicted,good_morning,hello,how,iloveyou,no,sorry,thankyou,yes
+good_morning,4,0,0,0,0,0,0,0
+hello,0,4,0,0,0,0,0,0
+how,0,0,5,0,0,0,0,0
+iloveyou,5,0,0,0,0,0,0,0
+no,5,0,0,0,0,0,0,0
+sorry,3,0,1,0,0,0,0,0
+thankyou,0,0,0,0,0,0,5,0
+yes,4,0,0,0,0,0,0,0
